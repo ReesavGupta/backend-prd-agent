@@ -1,6 +1,6 @@
 # PRD — ThinkingLens PRD Builder Agent (Technical)
 
-**Owner:** [You]  
+**Owner:** REESAV GUPTA  
 **Date:** 13 Aug 2025  
 **Status:** Draft v2 (Technical Expansion)  
 **Scope:** End-to-end product + architecture spec for a collaborative PRD-building agent with LangGraph orchestration, single-LLM runtime, dynamic prompt swapping, and HITL workflows.
