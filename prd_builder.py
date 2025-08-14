@@ -6,20 +6,23 @@ from state import SessionConfig, PRDBuilderState, SectionStatus
 from langchain.schema import HumanMessage
 from prompts import PRD_TEMPLATE_SECTIONS
 from langgraph.checkpoint.sqlite import SqliteSaver 
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langchain_core.runnables import RunnableConfig
+from langgraph.types import Command
 
 class ThinkingLensPRDBuilder:
     """Main interface for the PRD Builder Agent"""
     
     def __init__(self, checkpointer: BaseCheckpointSaver | None = None):
         self.workflow = create_prd_builder_graph()
+        # Default to in-memory checkpointer for thread-safety during development
         if checkpointer is not None:
             self._checkpointer_cm = None
             self.checkpointer = checkpointer
         else:
-            self._checkpointer_cm = SqliteSaver.from_conn_string("./.state.sqlite")
-            self.checkpointer = self._checkpointer_cm.__enter__()
+            self._checkpointer_cm = None
+            self.checkpointer = InMemorySaver()
 
         self.app = self.workflow.compile(checkpointer=self.checkpointer)
         
@@ -54,7 +57,8 @@ class ThinkingLensPRDBuilder:
             needs_human_input=False,
             human_feedback=None,
             versions=[],
-            checkpoint_reason=""
+            checkpoint_reason="",
+            run_assembler=False
         )
         
         thread_config:RunnableConfig = {"configurable": {"thread_id": session_id}}
@@ -80,11 +84,39 @@ class ThinkingLensPRDBuilder:
         if not snapshot.values:
             return {"status": "error", "message": "Session not found"}
         
-        # Add user message and continue
-        user_input:PRDBuilderState  = cast (PRDBuilderState, {"latest_user_input": message, "needs_human_input": False})
-        
         try:
-            result = self.app.invoke(user_input, config=thread_config)
+            # Determine if we are currently paused at an interrupt/human input
+            pending_next = getattr(snapshot, "next", None)
+            print(f"[PRD] snapshot.next for {session_id}: {pending_next}")
+            is_waiting_human = False
+            if pending_next and isinstance(pending_next, (list, tuple)):
+                is_waiting_human = "human_input" in pending_next
+            elif isinstance(pending_next, str):
+                is_waiting_human = pending_next == "human_input"
+            else:
+                # Fallback to state flag if next is unavailable
+                try:
+                    is_waiting_human = bool(snapshot.values.get("needs_human_input", False))
+                except Exception:
+                    is_waiting_human = False
+
+            if is_waiting_human:
+                print(f"[PRD] Resuming interrupt for session {session_id} via Command(resume)")
+                try:
+                    # Prefer stream for robust resume semantics
+                    events = list(self.app.stream(Command(resume=message), config=thread_config, stream_mode="values"))
+                    result = events[-1] if events else self.app.get_state(thread_config).values
+                except Exception as resume_exc:
+                    # Log and fallback to standard invoke to avoid hard failure in dev
+                    print(f"[PRD][WARN] Resume failed for {session_id}: {resume_exc}")
+                    user_input:PRDBuilderState  = cast (PRDBuilderState, {"latest_user_input": message, "needs_human_input": False})
+                    events = list(self.app.stream(user_input, config=thread_config, stream_mode="values"))
+                    result = events[-1] if events else self.app.get_state(thread_config).values
+            else:
+                print(f"[PRD] Continuing session {session_id} without interrupt")
+                user_input:PRDBuilderState  = cast (PRDBuilderState, {"latest_user_input": message, "needs_human_input": False})
+                events = list(self.app.stream(user_input, config=thread_config, stream_mode="values"))
+                result = events[-1] if events else self.app.get_state(thread_config).values
             
             return {
                 "session_id": session_id,
@@ -96,6 +128,7 @@ class ThinkingLensPRDBuilder:
             }
             
         except Exception as e:
+            print(f"[PRD][ERROR] send_message failed for {session_id}: {e}")
             return {"status": "error", "message": f"Error processing message: {str(e)}"}
     
     def get_prd_draft(self, session_id: str) -> Dict:

@@ -11,3 +11,9 @@ wheels/
 
 *.env
 uv.lock
+
+.state.sqlite
+.state.sqlite-shm
+.state.sqlite-wal
+.state.sqlite-journal
+

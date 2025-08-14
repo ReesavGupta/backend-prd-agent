@@ -1,8 +1,8 @@
 from langgraph.graph import StateGraph, START, END
 from state import PRDBuilderState
-from graph_nodes import idea_normalizer_node, refiner_node, section_planner_node, section_questioner_node, intent_classifier_node, section_updater_node, meta_responder_node, off_topic_responder_node, assembler_node, exporter_node
+from graph_nodes import idea_normalizer_node, refiner_node, section_planner_node, section_questioner_node, intent_classifier_node, section_updater_node, meta_responder_node, off_topic_responder_node, assembler_node, exporter_node, human_input_node
 from langgraph.types import  interrupt
-from graph_router import route_after_classification, route_after_human_input, route_after_update
+from graph_router import route_after_classification, route_after_human_input, route_after_update, route_after_assembler
 
 
 def create_prd_builder_graph():
@@ -22,8 +22,17 @@ def create_prd_builder_graph():
     workflow.add_node("assembler", assembler_node)
     workflow.add_node("exporter", exporter_node)
     workflow.add_node("refiner", refiner_node)
+
+    # From assembler: conditional resume
+    workflow.add_conditional_edges("assembler", route_after_assembler)
+
+	# From refiner: wait for human review input
+    workflow.add_edge("refiner", "human_input")
+
+	# From exporter: end
+    workflow.add_edge("exporter", END)
     # Human-in-the-loop node
-    workflow.add_node("human_input", interrupt("Please provide input to continue"))
+    workflow.add_node("human_input", human_input_node)
     
     # Define edges
     workflow.add_edge(START, "idea_normalizer")
@@ -35,7 +44,7 @@ def create_prd_builder_graph():
     )
     
     # From section_planner: always need human confirmation  
-    workflow.add_edge("section_planner", "human_input")
+    workflow.add_edge("section_planner", "section_questioner")
     
     # From section_questioner: always wait for human input
     workflow.add_edge("section_questioner", "human_input")
@@ -54,14 +63,5 @@ def create_prd_builder_graph():
     
     # From off_topic_responder: back to questioner
     workflow.add_edge("off_topic_responder", "section_questioner")
-    
-    # From assembler: wait for human review input
-    workflow.add_edge("assembler", "human_input")
-    
-    # From refiner: wait for human review input
-    workflow.add_edge("refiner", "human_input")
-    
-    # From exporter: end
-    workflow.add_edge("exporter", END)
     
     return workflow

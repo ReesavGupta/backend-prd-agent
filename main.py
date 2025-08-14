@@ -59,8 +59,11 @@ def refine(session_id: str):
 
 @app.post("/sessions/{session_id}/export")
 def export(session_id: str):
-    return agent.export_prd(session_id=session_id, format="markdown")
-
+	res = agent.send_message(session_id=session_id, message="export")
+	if res.get("status") != "success":
+		raise HTTPException(status_code=400, detail=res.get("message", "error"))
+	return res
+    
 @app.get("/sessions/{session_id}/versions")
 def list_versions(session_id: str):
     res = agent.list_versions(session_id)

@@ -65,3 +65,5 @@ class PRDBuilderState(TypedDict):
     needs_human_input: bool
     human_feedback: Optional[str]
     checkpoint_reason: str
+    # Assembler control
+    run_assembler: bool

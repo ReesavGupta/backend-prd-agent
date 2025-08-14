@@ -1,5 +1,6 @@
 from datetime import datetime
 import uuid
+from langgraph.types import interrupt
 from state import PRDBuilderState
 from llm import LLMInterface
 from langchain.schema import AIMessage
@@ -8,46 +9,38 @@ from state import PRDSection, SectionStatus, IntentType
 from langchain_core.prompts import ChatPromptTemplate
 
 def idea_normalizer_node(state: PRDBuilderState) -> PRDBuilderState:
-    llm = LLMInterface()
+	llm = LLMInterface()
 
-    raw_idea = state["latest_user_input"]
+	raw_idea = state["latest_user_input"]
+	result = llm.normalize_idea(raw_idea)
 
-    normalized_idea = llm.normalize_idea(raw_idea)
+	# If we still need clarification, ask questions and pause
+	if result.get("needs_clarification") and result.get("clarifying_questions"):
+		qs = "\n".join(f"- {q}" for q in result["clarifying_questions"])
+		state["needs_human_input"] = True
+		state["checkpoint_reason"] = "Need clarification for product idea"
+		state["messages"].append(AIMessage(content=f"To proceed, please answer:\n{qs}"))
+		return state
 
-    # Ensure normalized_idea is a string
-    if isinstance(normalized_idea, list):
-        normalized_idea = "\n".join(str(item) for item in normalized_idea)
-    elif not isinstance(normalized_idea, str):
-        normalized_idea = str(normalized_idea)
+	# Otherwise, proceed
+	state["normalized_idea"] = result.get("normalized", "").strip()
+	state["current_stage"] = "plan"
+	state["messages"].append(AIMessage(content=f"Great! I've understood your idea:\n\n{state['normalized_idea']}\n\nNow let's plan the PRD sections..."))
 
-    if "?" in normalized_idea and len(normalized_idea.split("?")) > 1:
-        # Need human input for clarification
-        state["needs_human_input"] = True
-        state["checkpoint_reason"] = "Need clarification for product idea"
-        state["messages"].append(AIMessage(content=normalized_idea))
-        return state
-
-    state["normalized_idea"] = normalized_idea
-    state["current_stage"] = "plan"
-    state["messages"].append(AIMessage(content=f"Great! I've understood your idea:\n\n{normalized_idea}\n\nNow let's plan the PRD sections..."))
-
-    # initialize prd sections
-    sections = {}
-    section_order = []    
-
-    for key, template in PRD_TEMPLATE_SECTIONS.items():
-        sections[key] = PRDSection(
-            key=key,
-            checklist_items=template["checklist"],
-            dependencies=template["dependencies"]
-        )
-        if template["mandatory"]:
-            section_order.append(key)
-    
-    state["prd_sections"] = sections
-    state["section_order"] = section_order
-    
-    return state
+	# initialize prd sections
+	sections = {}
+	section_order = []
+	for key, template in PRD_TEMPLATE_SECTIONS.items():
+		sections[key] = PRDSection(
+			key=key,
+			checklist_items=template["checklist"],
+			dependencies=template["dependencies"]
+		)
+		if template["mandatory"]:
+			section_order.append(key)
+	state["prd_sections"] = sections
+	state["section_order"] = section_order
+	return state
 
 
 def section_planner_node(state: PRDBuilderState) -> PRDBuilderState:
@@ -81,9 +74,13 @@ def section_planner_node(state: PRDBuilderState) -> PRDBuilderState:
         We'll go through each section systematically. Ready to start with the Problem Statement?"""
     
     state["messages"].append(AIMessage(content=message))
-    state["needs_human_input"] = True
-    state["checkpoint_reason"] = "Confirm PRD section plan"
+    state["needs_human_input"] = False
+    state["checkpoint_reason"] = ""
     
+    print("="*20)
+    print(state)
+    print("="*20)
+
     return state
 
 
@@ -122,6 +119,10 @@ def section_questioner_node(state: PRDBuilderState) -> PRDBuilderState:
     state["needs_human_input"] = True
     state["checkpoint_reason"] = f"Gathering info for {PRD_TEMPLATE_SECTIONS[current_section]['title']}"
     
+    print("="*20)
+    print(state)
+    print("="*20)
+
     return state
 
 def intent_classifier_node(state: PRDBuilderState) -> PRDBuilderState:
@@ -138,6 +139,11 @@ def intent_classifier_node(state: PRDBuilderState) -> PRDBuilderState:
     state["intent_classification"] = IntentType(classification["intent"])
     state["target_section"] = classification.get("target_section")
     
+
+    print("="*20)
+    print(state)
+    print("="*20)
+
     return state
 
 def section_updater_node(state: PRDBuilderState) -> PRDBuilderState:
@@ -184,14 +190,15 @@ def section_updater_node(state: PRDBuilderState) -> PRDBuilderState:
         section.status = SectionStatus.COMPLETED
         
         # Advance only if we're working on the current section
-        if target_section == original_current:
-            current_idx = state["section_order"].index(target_section)
-            if current_idx + 1 < len(state["section_order"]):
-                state["config"].current_section = state["section_order"][current_idx + 1]
-            else:
-                state["config"].current_section = None  # All sections done
+        current_idx = state["section_order"].index(target_section)
+        
+        if current_idx + 1 < len(state["section_order"]):
+            state["config"].current_section = state["section_order"][current_idx + 1]
+        else:
+            state["config"].current_section = None  # All sections done
         
         state["messages"].append(AIMessage(content=f"✅ {PRD_TEMPLATE_SECTIONS[target_section]['title']} section completed!"))
+        state["run_assembler"] = True
     else:
         # Continue with more questions
         if update_result["next_questions"] != "complete":
@@ -254,35 +261,36 @@ def off_topic_responder_node(state: PRDBuilderState) -> PRDBuilderState:
     return state
 
 def assembler_node(state: PRDBuilderState) -> PRDBuilderState:
-    """Assemble and refine the complete PRD"""
-    
-    # Build the complete PRD document
-    prd_content = f"""# PRD: {state['normalized_idea']}
+	"""Assemble and refine the complete PRD"""
+	
+	# Build the complete PRD document
+	prd_content = f"""# PRD: {state['normalized_idea']}
 
-    **Created:** {state['config'].created_at.strftime('%Y-%m-%d %H:%M')}
-    **Session:** {state['config'].session_id}
+	**Created:** {state['config'].created_at.strftime('%Y-%m-%d %H:%M')}
+	**Session:** {state['config'].session_id}
 
-    """
-    
-    for section_key in state["section_order"]:
-        section = state["prd_sections"][section_key]
-        if section.content:
-            title = PRD_TEMPLATE_SECTIONS[section_key]["title"]
-            prd_content += f"\n## {title}\n\n{section.content}\n"
-    
-    # Create snapshot
-    state["prd_snapshot"] = prd_content
-    
-    # Simple consistency check (in real implementation, this would be more sophisticated)
-    issues = []
-    if len(state["glossary"]) == 0:
-        issues.append("Consider defining key terms in a glossary")
-    
-    state["issues_list"] = issues
-    state["current_stage"] = "review"
-    
-    # Present assembled PRD
-    message = f"""🎉 **PRD Assembly Complete!**
+	"""
+	
+	for section_key in state["section_order"]:
+		section = state["prd_sections"][section_key]
+		if section.content:
+			title = PRD_TEMPLATE_SECTIONS[section_key]["title"]
+			prd_content += f"\n## {title}\n\n{section.content}\n"
+	
+	# Create snapshot
+	state["prd_snapshot"] = prd_content
+	
+	# Simple consistency check
+	issues = []
+	if len(state["glossary"]) == 0:
+		issues.append("Consider defining key terms in a glossary")
+	state["issues_list"] = issues
+
+	is_final = state["config"].current_section is None
+
+	if is_final:
+		state["current_stage"] = "review"
+		message = f"""🎉 **PRD Assembly Complete!**
 
 I've assembled your complete PRD. Here's what we've created:
 
@@ -294,12 +302,17 @@ Would you like to:
 3. Add more details to specific sections
 
 What would you prefer?"""
-    
-    state["messages"].append(AIMessage(content=message))
-    state["needs_human_input"] = True
-    state["checkpoint_reason"] = "PRD assembly complete - ready for review"
-    
-    return state
+		state["messages"].append(AIMessage(content=message))
+		state["needs_human_input"] = True
+		state["checkpoint_reason"] = "PRD assembly complete - ready for review"
+	else:
+		# Light checkpoint: continue building
+		state["current_stage"] = "build"
+		state["needs_human_input"] = False
+		state["checkpoint_reason"] = ""
+		state["run_assembler"] = False
+
+	return state
 
 def exporter_node(state: PRDBuilderState) -> PRDBuilderState:
     """Export the final PRD"""
@@ -348,7 +361,7 @@ def refiner_node(state: PRDBuilderState) -> PRDBuilderState:
     ])
     
     result = llm.model.invoke(prompt.format_messages())
-    refined = result.content.strip() if result and result.content else full_text
+    refined = str(result.content).strip() if result and result.content else full_text
 
     state["prd_snapshot"] = refined
     state["current_stage"] = "review"
@@ -356,3 +369,20 @@ def refiner_node(state: PRDBuilderState) -> PRDBuilderState:
     state["needs_human_input"] = True
     state["checkpoint_reason"] = "Refinement complete"
     return state
+    
+def human_input_node(state: PRDBuilderState) -> PRDBuilderState:
+	state["needs_human_input"] = True
+	value = interrupt(state.get("checkpoint_reason") or "Please provide input to continue")
+	state["needs_human_input"] = False
+	if isinstance(value, str):
+		state["latest_user_input"] = value
+	elif isinstance(value, dict):
+		# Prefer a conventional resume payload shape {"data": <user_text>}
+		if "data" in value:
+			state["latest_user_input"] = value["data"]
+		else:
+			for k, v in value.items():
+				state[k] = v
+	else:
+		state["latest_user_input"] = str(value)
+	return state
