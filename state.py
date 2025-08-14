@@ -2,7 +2,7 @@ from enum import Enum
 from datetime import datetime
 from dataclasses import dataclass, field
 from langchain.schema import BaseMessage
-from typing import TypedDict, Annotated, Dict, List, Optional, Literal
+from typing import Any, TypedDict, Annotated, Dict, List, Optional, Literal
 from langgraph.graph.message import add_messages
 
 class SectionStatus(Enum):
@@ -50,6 +50,7 @@ class PRDBuilderState(TypedDict):
     section_order: List[str]
     prd_snapshot: str
     issues_list: List[str]
+    versions: List[Dict[str, Any]]
     
     # Workflow control
     current_stage: Literal["init", "plan", "build", "assemble", "review", "export"]

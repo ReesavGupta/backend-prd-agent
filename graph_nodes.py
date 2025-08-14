@@ -1,9 +1,11 @@
 from datetime import datetime
+import uuid
 from state import PRDBuilderState
 from llm import LLMInterface
 from langchain.schema import AIMessage
 from prompts import PRD_TEMPLATE_SECTIONS
 from state import PRDSection, SectionStatus, IntentType
+from langchain_core.prompts import ChatPromptTemplate
 
 def idea_normalizer_node(state: PRDBuilderState) -> PRDBuilderState:
     llm = LLMInterface()
@@ -53,8 +55,16 @@ def section_planner_node(state: PRDBuilderState) -> PRDBuilderState:
     
     # Default section order based on dependencies
     ordered_sections = [
-        "problem_statement", "goals", "user_personas", "success_metrics",
-        "core_features", "user_flows", "constraints", "risks", "timeline"
+        "problem_statement",
+        "goals",
+        "user_personas",
+        "core_features",
+        "user_flows",
+        "technical_architecture",
+        "success_metrics",
+        "risks",
+        "constraints",
+        "timeline"
     ]
     
     # Set the first section as current
@@ -95,7 +105,9 @@ def section_questioner_node(state: PRDBuilderState) -> PRDBuilderState:
         "normalized_idea": state["normalized_idea"],
         "current_content": section.content,
         "completed_sections": [k for k, v in state["prd_sections"].items() 
-                              if v.status == SectionStatus.COMPLETED]
+                              if v.status == SectionStatus.COMPLETED],
+        "conversation_summary": state.get("conversation_summary", ""),
+        "prd_snapshot": state.get("prd_snapshot", "")[:2000],
     }
     
     # Generate questions
@@ -139,12 +151,15 @@ def section_updater_node(state: PRDBuilderState) -> PRDBuilderState:
     if target_section not in state["prd_sections"]:
         return state
     
+    original_current = state["config"].current_section
     section = state["prd_sections"][target_section]
     
     # Build context for update
     context = {
         "normalized_idea": state["normalized_idea"],
-        "prd_sections": {k: v.content for k, v in state["prd_sections"].items() if v.content}
+        "prd_sections": {k: v.content for k, v in state["prd_sections"].items() if v.content},
+        "conversation_summary": state.get("conversation_summary", ""),
+        "prd_snapshot": state.get("prd_snapshot", "")[:2000],
     }
     
     # Update section content
@@ -157,16 +172,24 @@ def section_updater_node(state: PRDBuilderState) -> PRDBuilderState:
     section.completion_score = update_result["completion_score"]
     section.last_updated = datetime.now()
     
+    # Mark dependencies stale on revision
+    if intent == IntentType.REVISION:
+        for k, s in state["prd_sections"].items():
+            if target_section in s.dependencies and s.status == SectionStatus.COMPLETED:
+                s.status = SectionStatus.STALE
+                state["prd_sections"][k] = s
+    
     # Check if section is complete
     if section.completion_score >= 0.8:
         section.status = SectionStatus.COMPLETED
         
-        # Move to next section
-        current_idx = state["section_order"].index(target_section)
-        if current_idx + 1 < len(state["section_order"]):
-            state["config"].current_section = state["section_order"][current_idx + 1]
-        else:
-            state["config"].current_section = None  # All sections done
+        # Advance only if we're working on the current section
+        if target_section == original_current:
+            current_idx = state["section_order"].index(target_section)
+            if current_idx + 1 < len(state["section_order"]):
+                state["config"].current_section = state["section_order"][current_idx + 1]
+            else:
+                state["config"].current_section = None  # All sections done
         
         state["messages"].append(AIMessage(content=f"✅ {PRD_TEMPLATE_SECTIONS[target_section]['title']} section completed!"))
     else:
@@ -174,7 +197,24 @@ def section_updater_node(state: PRDBuilderState) -> PRDBuilderState:
         if update_result["next_questions"] != "complete":
             state["messages"].append(AIMessage(content=update_result["next_questions"]))
     
+    # If this was an off-target update, restore focus
+    if intent == IntentType.OFF_TARGET_UPDATE and original_current:
+        state["config"].current_section = original_current
+    
     state["prd_sections"][target_section] = section
+    
+    # Increment turn counter and summarize conversation every 6 turns
+    try:
+        state["config"].turn_counter += 1
+    except Exception:
+        pass
+    if state["config"].turn_counter % 6 == 0:
+        try:
+            recent_summary = llm.summarize_conversation(state["messages"], state.get("conversation_summary", ""))
+            state["conversation_summary"] = recent_summary
+        except Exception:
+            pass
+    
     return state
 
 def meta_responder_node(state: PRDBuilderState) -> PRDBuilderState:
@@ -264,31 +304,55 @@ What would you prefer?"""
 def exporter_node(state: PRDBuilderState) -> PRDBuilderState:
     """Export the final PRD"""
     
-    # Create final version
     export_content = state["prd_snapshot"]
-    
-    # In real implementation, this would generate PDF, save to database, etc.
-    export_info = {
-        "markdown": export_content,
+    version = {
+        "version_id": str(uuid.uuid4()),
         "session_id": state["config"].session_id,
         "created_at": datetime.now().isoformat(),
-        "version": "1.0"
+        "by": state["config"].user_id,
+        "format": "markdown",
+        "content": export_content,
     }
+    versions = state.get("versions", [])
+    versions.append(version)
+    state["versions"] = versions
     
     message = f"""📄 **PRD Export Complete!**
-
+    
     Your PRD has been successfully created and is ready for use!
-
-    **Summary:**
-    - **Sections completed:** {len([s for s in state['prd_sections'].values() if s.status == SectionStatus.COMPLETED])}
-    - **Word count:** ~{len(state['prd_snapshot'].split())} words
-    - **Session ID:** {state['config'].session_id}
-
-    The PRD includes all essential sections and is ready to share with stakeholders.
-
-    Thank you for using ThinkingLens PRD Builder! 🚀"""
-        
+    
+    Versions saved: {len(state['versions'])}
+    Latest version id: {version['version_id']}
+    """
+            
     state["messages"].append(AIMessage(content=message))
     state["current_stage"] = "export"
     
+    return state
+    
+def refiner_node(state: PRDBuilderState) -> PRDBuilderState:
+    """Refine the assembled PRD with an editorial pass and expand issues."""
+    llm = LLMInterface()
+    full_text = state.get("prd_snapshot", "")
+    if not full_text:
+        return state
+
+    prompt_text = f"""Refine this PRD for clarity, consistency, and measurable KPIs.
+    Return improved markdown only.
+    {full_text}
+    """
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "You are a concise PRD editor. Improve clarity, enforce measurable metrics, align terminology."),
+        ("human", prompt_text)
+    ])
+    
+    result = llm.model.invoke(prompt.format_messages())
+    refined = result.content.strip() if result and result.content else full_text
+
+    state["prd_snapshot"] = refined
+    state["current_stage"] = "review"
+    state["messages"].append(AIMessage(content="✍️ Applied an editorial pass. Would you like to export or continue editing?"))
+    state["needs_human_input"] = True
+    state["checkpoint_reason"] = "Refinement complete"
     return state

@@ -37,6 +37,8 @@ def route_after_human_input(state: PRDBuilderState) -> str:
         user_input = state["latest_user_input"].lower()
         if "export" in user_input or "finish" in user_input:
             return "exporter"
+        elif "refine" in user_input or "polish" in user_input:
+            return "refiner"
         elif "edit" in user_input or "review" in user_input:
             return "intent_classifier" 
         else:

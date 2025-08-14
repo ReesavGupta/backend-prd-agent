@@ -1,6 +1,6 @@
 from langgraph.graph import StateGraph, START, END
 from state import PRDBuilderState
-from graph_nodes import idea_normalizer_node, section_planner_node, section_questioner_node, intent_classifier_node, section_updater_node, meta_responder_node, off_topic_responder_node, assembler_node, exporter_node
+from graph_nodes import idea_normalizer_node, refiner_node, section_planner_node, section_questioner_node, intent_classifier_node, section_updater_node, meta_responder_node, off_topic_responder_node, assembler_node, exporter_node
 from langgraph.types import  interrupt
 from graph_router import route_after_classification, route_after_human_input, route_after_update
 
@@ -21,7 +21,7 @@ def create_prd_builder_graph():
     workflow.add_node("off_topic_responder", off_topic_responder_node)
     workflow.add_node("assembler", assembler_node)
     workflow.add_node("exporter", exporter_node)
-    
+    workflow.add_node("refiner", refiner_node)
     # Human-in-the-loop node
     workflow.add_node("human_input", interrupt("Please provide input to continue"))
     
@@ -57,6 +57,9 @@ def create_prd_builder_graph():
     
     # From assembler: wait for human review input
     workflow.add_edge("assembler", "human_input")
+    
+    # From refiner: wait for human review input
+    workflow.add_edge("refiner", "human_input")
     
     # From exporter: end
     workflow.add_edge("exporter", END)

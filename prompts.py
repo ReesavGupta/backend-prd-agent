@@ -110,3 +110,36 @@ PRD_TEMPLATE_SECTIONS = {
         ]
     }
 }
+
+PRD_TEMPLATE_SECTIONS.update({
+    "open_questions": {
+        "title": "Open Questions",
+        "mandatory": False,
+        "dependencies": [],
+        "checklist": [
+            "List unknowns clearly",
+            "Assign owner for each question",
+            "Define next step to resolve"
+        ]
+    },
+    "out_of_scope": {
+        "title": "Out of Scope",
+        "mandatory": False,
+        "dependencies": [],
+        "checklist": [
+            "Explicitly list exclusions",
+            "Clarify reasons for exclusion",
+            "Note revisit conditions"
+        ]
+    },
+    "future_ideas": {
+        "title": "Future Ideas",
+        "mandatory": False,
+        "dependencies": [],
+        "checklist": [
+            "Capture high-potential ideas",
+            "Note assumptions and risks",
+            "Rough sequencing (later phases)"
+        ]
+    },
+})
