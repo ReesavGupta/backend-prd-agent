@@ -4,6 +4,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from time import perf_counter
 from prd_builder import ThinkingLensPRDBuilder
+from fastapi.responses import StreamingResponse
+from langgraph.types import Command
+import json
 
 app = FastAPI(title="ThinkingLens PRD Builder")
 agent = ThinkingLensPRDBuilder()
@@ -63,6 +66,45 @@ def export(session_id: str):
 	if res.get("status") != "success":
 		raise HTTPException(status_code=400, detail=res.get("message", "error"))
 	return res
+    
+@app.get("/sessions/{session_id}/stream")
+def stream_message(session_id: str, message: str):
+    def event_stream():
+        thread_config = {"configurable": {"thread_id": session_id}}
+        snapshot = agent.app.get_state(thread_config)
+        if not snapshot.values:
+            yield f"event: error\ndata: {json.dumps({'error': 'Session not found'})}\n\n"
+            return
+
+        pending_next = getattr(snapshot, "next", None)
+        is_waiting_human = False
+        if isinstance(pending_next, (list, tuple)):
+            is_waiting_human = "human_input" in pending_next
+        elif isinstance(pending_next, str):
+            is_waiting_human = pending_next == "human_input"
+        else:
+            is_waiting_human = bool(snapshot.values.get("needs_human_input", False))
+
+        input_payload = Command(resume=message) if is_waiting_human else {
+            "latest_user_input": message,
+            "needs_human_input": False,
+        }
+
+        try:
+            for ev in agent.app.stream(input_payload, config=thread_config, stream_mode="values"):
+                out = {
+                    "stage": ev.get("current_stage"),
+                    "current_section": (ev["config"].current_section if "config" in ev else None),
+                    "needs_input": ev.get("needs_human_input", False),
+                    "last_message": (ev["messages"][-1].content if ev.get("messages") else None),
+                }
+                yield f"data: {json.dumps(out)}\n\n"
+                if ev.get("needs_human_input"):
+                    break
+        except Exception as e:
+            yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
     
 @app.get("/sessions/{session_id}/versions")
 def list_versions(session_id: str):
