@@ -57,13 +57,18 @@ class PRDBuilderState(TypedDict):
     intent_classification: Optional[IntentType]
     target_section: Optional[str]
     
-    # Memory management
+	# Memory management
     conversation_summary: str
     glossary: Dict[str, str]
-    
-    # Human-in-the-loop control
+	
+	# Human-in-the-loop control
     needs_human_input: bool
     human_feedback: Optional[str]
     checkpoint_reason: str
-    # Assembler control
+	# Assembler control
     run_assembler: bool
+
+	# RAG
+    rag_enabled: bool
+    rag_context: str
+    rag_sources: List[str]

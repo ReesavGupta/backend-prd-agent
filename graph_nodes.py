@@ -105,6 +105,7 @@ def section_questioner_node(state: PRDBuilderState) -> PRDBuilderState:
                               if v.status == SectionStatus.COMPLETED],
         "conversation_summary": state.get("conversation_summary", ""),
         "prd_snapshot": state.get("prd_snapshot", "")[:2000],
+        "rag_context": state.get("rag_context", ""),
     }
     
     # Generate questions
@@ -166,6 +167,7 @@ def section_updater_node(state: PRDBuilderState) -> PRDBuilderState:
         "prd_sections": {k: v.content for k, v in state["prd_sections"].items() if v.content},
         "conversation_summary": state.get("conversation_summary", ""),
         "prd_snapshot": state.get("prd_snapshot", "")[:2000],
+        "rag_context": state.get("rag_context", ""),
     }
     
     # Update section content

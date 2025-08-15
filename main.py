@@ -1,5 +1,7 @@
+import os
+from typing import List
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from time import perf_counter
@@ -119,6 +121,23 @@ def get_version(session_id: str, version_id: str):
     if res.get("status") != "success":
         raise HTTPException(status_code=404, detail=res.get("message", "not found"))
     return res
+
+@app.post("/sessions/{session_id}/message-with-files")
+async def send_message_with_files(session_id: str, message: str = Form(...), files: List[UploadFile] = File(None)):
+	saved_paths: List[str] = []
+	if files:
+		upload_dir = os.path.join("uploads", session_id)
+		os.makedirs(upload_dir, exist_ok=True)
+		for f in files:
+			filename = f.filename or "upload"
+			dest = os.path.join(upload_dir, filename)
+			with open(dest, "wb") as out:
+				out.write(await f.read())
+			saved_paths.append(dest)
+	res = agent.send_message(session_id=session_id, message=message, attachments=saved_paths if saved_paths else None)
+	if res.get("status") != "success":
+		raise HTTPException(status_code=400, detail=res.get("message", "error"))
+	return res
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

@@ -86,10 +86,16 @@ class LLMInterface:
             f"Section checklist to complete:\n{checklist}\n\n"
             "Be specific and actionable. Focus on the highest-impact questions."
         )
-        human = f"PRD Context: {context.get('normalized_idea','')}\nCurrent section content: {context.get('current_content','')}\nOther sections completed: {context.get('completed_sections', [])}"
+        rag = (context.get('rag_context','') or '')
+        human = (
+            f"PRD Context: {context.get('normalized_idea','')}\n"
+            f"Current section content: {context.get('current_content','')}\n"
+            f"Other sections completed: {context.get('completed_sections', [])}\n"
+            f"Relevant document excerpts:\n{rag[:2000]}"
+        )
         result = self.model.invoke([SystemMessage(content=system), HumanMessage(content=human)])
         return str(result.content).strip()
-    
+
     def update_section_content(self, section_key: str, user_input: str, current_content: str, context: Dict) -> Dict:
         section_info = PRD_TEMPLATE_SECTIONS[section_key]
         checklist = "\n".join('- ' + item for item in section_info['checklist'])
@@ -104,9 +110,18 @@ class LLMInterface:
             "Checklist:\n"
             f"{checklist}"
         )
-        human = f"User input: {user_input}\nCurrent content: {current_content}\nContext: {json.dumps(context, default=str)}"
+        rag_context = (context.get("rag_context", "") or "")
+        human = (
+            f"User input: {user_input}\n"
+            f"Current content: {current_content}\n"
+            f"Context: {json.dumps(context, default=str)}\n"
+            f"Relevant document excerpts:\n{rag_context[:2000]}"
+        )
+
         result = self.model.invoke([SystemMessage(content=system), HumanMessage(content=human)])
+
         payload = self._json_from_text(str(result.content).strip())
+        
         if payload and "updated_content" in payload and "completion_score" in payload:
             return {
                 "updated_content": payload["updated_content"],
