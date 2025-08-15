@@ -1,40 +1,57 @@
 import os
 import uuid
+import asyncio
 from datetime import datetime
-
 from langchain_nomic.embeddings import NomicEmbeddings
 from langchain_pinecone.vectorstores import PineconeVectorStore
 from pinecone import Pinecone, ServerlessSpec
+from database.database import MongoDBService
+from database.redis import RedisService
 from graph import create_prd_builder_graph
 from typing import Dict, Any, List, Optional, cast
 from llm import LLMInterface
 from state import SessionConfig, PRDBuilderState, SectionStatus
 from langchain.schema import HumanMessage
-from prompts import PRD_TEMPLATE_SECTIONS
-from langgraph.checkpoint.sqlite import SqliteSaver 
+from prompts import PRD_TEMPLATE_SECTIONS 
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langchain_core.runnables import RunnableConfig
 from langgraph.types import Command
 from RAGService import CompleteRagService
+from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.mongodb import MongoDBSaver
 
 class ThinkingLensPRDBuilder:
     """Main interface for the PRD Builder Agent"""
     
     def __init__(self, checkpointer: BaseCheckpointSaver | None = None):
         self.workflow = create_prd_builder_graph()
-        # Default to in-memory checkpointer for thread-safety during development
+        
         if checkpointer is not None:
-            self._checkpointer_cm = None
             self.checkpointer = checkpointer
         else:
-            self._checkpointer_cm = None
-            self.checkpointer = InMemorySaver()
+            if os.getenv("MONGODB_URI"):
+                # self.checkpointer = MongoDBCheckpointer(
+                #     connection_string=os.getenv("MONGODB_URI"),
+                #     database_name="prd_builder",
+                #     collection_name="sessions"
+                # )
+                self.checkpointer = MongoDBSaver.from_conn_string(conn_string=os.getenv("MONGODB_URI"), db_name="prd_builder", checkpoint_collection_name="sessions")
+            else:
+                self.checkpointer = SqliteSaver(conn="prd_sessions.db")
 
         self.app = self.workflow.compile(checkpointer=self.checkpointer)
         self.rag: Optional[CompleteRagService] = None
 
-
+        try:
+            self.mongodb_service = MongoDBService()
+            self.redis_service = RedisService()
+            print("Database services initialized successfully")
+        except Exception as e:
+            print(f"Database services initialization failed: {e}")
+            self.mongodb_service = None
+            self.redis_service = None
+    
     def __del__(self):
         cm = getattr(self, "_checkpointer_cm", None)
         if cm is not None:
@@ -309,16 +326,34 @@ class ThinkingLensPRDBuilder:
             return {"status": "error", "message": "PRD not yet assembled"}
         
         try:
+            # Check cache first
+            cache_key = f"flowchart:{session_id}:{flowchart_type}"
+            cached_result = self._get_from_cache(cache_key)
+
+            if cached_result:
+                return {
+                    "session_id": session_id,
+                    "status": "success",
+                    "flowchart_type": flowchart_type,
+                    "mermaid_code": cached_result,
+                    "prd_sections_used": [k for k, v in state["prd_sections"].items() if v.status == SectionStatus.COMPLETED],
+                    "generated_at": datetime.now().isoformat(),
+                    "cached": True                    
+                }
+
             llm = LLMInterface()
             mermaid_code = llm.generate_technical_flowchart(prd_snapshot, flowchart_type)
-            
+            if mermaid_code:
+                self._cache_result(cache_key, mermaid_code, ttl=3600)             
+
             return {
                 "session_id": session_id,
                 "status": "success",
                 "flowchart_type": flowchart_type,
                 "mermaid_code": mermaid_code,
                 "prd_sections_used": [k for k, v in state["prd_sections"].items() if v.status == SectionStatus.COMPLETED],
-                "generated_at": datetime.now().isoformat()
+                "generated_at": datetime.now().isoformat(),
+                "cached": False
             }
             
         except Exception as e:
@@ -354,3 +389,122 @@ class ThinkingLensPRDBuilder:
         except Exception as e:
             return {"status": "error", "message": f"Failed to generate ER diagram: {str(e)}"}
         
+    def _get_from_cache(self, key: str) -> Optional[str]:
+        """Get cached result from Redis"""
+        try:
+            if not self.redis_service or not self.redis_service.redis_client:
+                return None
+                
+            # Extract session_id and diagram_type from key
+            parts = key.split(":")
+            if len(parts) >= 3:
+                session_id = parts[1]
+                diagram_type = parts[2]
+                return self.redis_service.get_cached_diagram(session_id, diagram_type)
+        except Exception:
+            pass
+        return None
+
+    def _cache_result(self, key: str, value: str, ttl: int = 3600) -> None:
+        """Cache result in Redis"""
+        try:
+            # Extract session_id and diagram_type from key
+            parts = key.split(":")
+            if len(parts) >= 3:
+                session_id = parts[1]
+                diagram_type = parts[2]
+                self.redis_service.cache_diagram(session_id, diagram_type, value)
+        except Exception:
+            pass
+    
+    def save_session_to_database(self, session_id: str) -> Dict:
+        """Save the current session state to MongoDB permanently"""
+        thread_config: RunnableConfig = {"configurable": {"thread_id": session_id}}
+        
+        try:
+            # Get current state
+            snapshot = self.app.get_state(thread_config)
+            if not snapshot.values:
+                return {"status": "error", "message": "Session not found"}
+            
+            state = snapshot.values
+            
+            # Prepare data for MongoDB
+            prd_data = {
+                "session_id": session_id,
+                "user_id": state.get("config").user_id,
+                "normalized_idea": state.get("normalized_idea"),
+                "prd_sections": state.get("prd_sections", {}),
+                "conversation_summary": state.get("conversation_summary", ""),
+                "prd_snapshot": state.get("prd_snapshot", ""),
+                "current_stage": state.get("current_stage"),
+                "current_section": state.get("current_section"),
+                "rag_context": state.get("rag_context", ""),
+                "rag_sources": state.get("rag_sources", []),
+                "created_at": state["config"].created_at,
+                "updated_at": datetime.now().isoformat(),
+                "status": "saved"
+            }
+            
+            # Generate and store diagrams
+            try:
+                flowchart = self.generate_flowchart(session_id, "system_architecture")
+                er_diagram = self.generate_er_diagram(session_id, "database_schema")
+                
+                prd_data["diagrams"] = {
+                    "system_architecture": flowchart.get("mermaid_code", ""),
+                    "database_schema": er_diagram.get("mermaid_code", "")
+                }
+            except Exception as e:
+                prd_data["diagrams"] = {"error": f"Failed to generate diagrams: {str(e)}"}
+            
+             # Save to MongoDB using your existing service
+            try:
+                if self.mongodb_service:
+                    try:
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        prd_id = loop.run_until_complete(
+                            self.mongodb_service.save_prd(prd_data)
+                        )
+                        loop.close()
+                    except Exception as e:
+                        print(f"Async operation failed: {e}")
+                        prd_id = "failed"
+                else:
+                    prd_id = "no_mongodb_service"
+                
+                # Cache the PRD data
+                if self.redis_service:
+                    self.redis_service.cache_prd(session_id, prd_data)
+                
+                return {
+                    "status": "success",
+                    "message": "Session saved successfully",
+                    "session_id": session_id,
+                    "prd_id": prd_id,
+                    "saved_at": prd_data["updated_at"]
+                }
+                
+            except Exception as e:
+                return {"status": "error", "message": f"MongoDB save failed: {str(e)}"}
+            
+        except Exception as e:
+            return {"status": "error", "message": f"Failed to save session: {str(e)}"}
+    
+    def _clear_session_cache(self, session_id: str) -> None:
+        """Clear all cached data for a session"""
+        try:
+            if not self.redis_service or not self.redis_service.redis_client:
+                return
+                
+            # Clear PRD cache
+            self.redis_service.redis_client.delete(f"prd:cache:{session_id}")
+            
+            # Clear diagram caches
+            diagram_types = ["system_architecture", "user_flows", "database_schema"]
+            for diagram_type in diagram_types:
+                self.redis_service.redis_client.delete(f"diagram:{session_id}:{diagram_type}")
+                
+        except Exception:
+            pass

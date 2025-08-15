@@ -5,6 +5,8 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from time import perf_counter
+from database.database import MongoDBService
+from database.redis import RedisService
 from prd_builder import ThinkingLensPRDBuilder
 from fastapi.responses import StreamingResponse
 from langgraph.types import Command
@@ -155,6 +157,14 @@ def generate_er_diagram(session_id: str, diagram_type: str = "database_schema"):
         raise HTTPException(status_code=400, detail=res.get("message", "error"))
     return res
 
+@app.post("/sessions/{session_id}/save")
+async def save_session(session_id: str):
+    """Save the current session to database permanently"""
+    try:
+        result = agent.save_session_to_database(session_id)
+        return result
+    except Exception as e:
+        return {"status": "error", "message": f"Failed to save session: {str(e)}"}
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
