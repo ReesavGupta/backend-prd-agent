@@ -4,7 +4,7 @@ from typing import Dict, List
 from langchain.schema import BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
-from prompts import PRD_TEMPLATE_SECTIONS
+from prompts import ER_DIAGRAM_PROMPTS, PRD_TEMPLATE_SECTIONS, FLOWCHART_PROMPTS
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -197,3 +197,75 @@ class LLMInterface:
             "substantive": bool(payload.get("substantive", False)),
             "confidence": float(payload.get("confidence", 0.5)),
         }
+    
+
+    def generate_technical_flowchart(self, prd_snapshot: str, flowchart_type: str = "system_architecture") -> str:
+        """Generate different types of Mermaid flowcharts based on PRD content"""
+
+        flowchart_prompts = FLOWCHART_PROMPTS
+        # flow chart type can be system_architecture, user_flow, data_flow, deployment
+        system = (
+            f"You are an expert technical architect. Generate a Mermaid flowchart for {flowchart_type}.\n\n"
+            f"Specific Requirements:\n{flowchart_prompts.get(flowchart_type, flowchart_prompts['system_architecture'])}\n\n"
+            "Return ONLY valid Mermaid code, no explanations or markdown formatting.\n"
+            "Ensure the flowchart is technically accurate and implementable based on the PRD content."
+        )
+        
+        human = f"PRD Content:\n{prd_snapshot}\n\nGenerate a {flowchart_type} flowchart in Mermaid format."
+        
+        result = self.classifier_model.invoke([SystemMessage(content=system), HumanMessage(content=human)])
+        return str(result.content).strip()
+
+    def generate_technical_flowchart(self, prd_snapshot: str, flowchart_type: str = "system_architecture") -> str:
+        """Generate Mermaid flowchart code based on PRD content"""
+        
+        system = (
+            f"You are an expert technical architect. Generate a Mermaid flowchart for a {flowchart_type} "
+            "based on the PRD content provided. Return ONLY the Mermaid code, no explanations.\n\n"
+            "Flowchart Requirements:\n"
+            "- Use proper Mermaid syntax\n"
+            "- Include all major system components\n"
+            "- Show data flow and relationships\n"
+            "- Use appropriate shapes (rectangles, diamonds, circles)\n"
+            "- Include decision points where relevant\n"
+            "- Make it technically accurate and implementable\n\n"
+            "Mermaid Syntax:\n"
+            "- Start with 'flowchart TD' or 'flowchart LR'\n"
+            "- Use 'A[Label]' for rectangles\n"
+            "- Use 'B{Decision?}' for diamonds\n"
+            "- Use 'C((Process))' for circles\n"
+            "- Use '-->' for arrows\n"
+            "- Use '|text|' for labels on arrows"
+        )
+        
+        human = (
+            f"PRD Content:\n{prd_snapshot}\n\n"
+            f"Generate a {flowchart_type} flowchart in Mermaid format."
+        )
+        
+        # Use gpt-4o-mini for cost efficiency
+        result = self.classifier_model.invoke([SystemMessage(content=system), HumanMessage(content=human)])
+        return str(result.content).strip()
+
+    def generate_er_diagram(self, prd_snapshot: str, diagram_type: str = "database_schema") -> str:
+        """Generate Mermaid ER diagrams based on PRD content"""
+        
+        er_diagram_prompts = ER_DIAGRAM_PROMPTS
+        
+        system = (
+            f"You are an expert database architect. Generate a Mermaid ER diagram for {diagram_type}.\n\n"
+            f"Specific Requirements:\n{er_diagram_prompts.get(diagram_type, er_diagram_prompts['database_schema'])}\n\n"
+            "Return ONLY valid Mermaid ER diagram code, no explanations.\n"
+            "Use proper Mermaid ER syntax:\n"
+            "- Start with 'erDiagram'\n"
+            "- Use 'EntityName {' for entities\n"
+            "- Use 'attribute_name attribute_type' for attributes\n"
+            "- Use 'EntityA ||--o{ EntityB : relationship_description' for relationships\n"
+            "- Include primary keys (PK) and foreign keys (FK)\n"
+            "- Make it technically accurate and implementable based on the PRD content"
+        )
+        
+        human = f"PRD Content:\n{prd_snapshot}\n\nGenerate a {diagram_type} ER diagram in Mermaid format."
+        
+        result = self.classifier_model.invoke([SystemMessage(content=system), HumanMessage(content=human)])
+        return str(result.content).strip()

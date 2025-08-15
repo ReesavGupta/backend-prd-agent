@@ -108,10 +108,7 @@ PRD_TEMPLATE_SECTIONS = {
             "Resource allocation is considered",
             "Buffer time for unknowns is included"
         ]
-    }
-}
-
-PRD_TEMPLATE_SECTIONS.update({
+    },
     "open_questions": {
         "title": "Open Questions",
         "mandatory": False,
@@ -142,4 +139,76 @@ PRD_TEMPLATE_SECTIONS.update({
             "Rough sequencing (later phases)"
         ]
     },
-})
+}
+
+FLOWCHART_PROMPTS = {
+    "system_architecture": (
+        "Generate a system architecture flowchart showing:\n"
+        "- Frontend components (web app, mobile app)\n"
+        "- Backend services (API, database, AI engine)\n"
+        "- External integrations (CRM, third-party APIs)\n"
+        "- Data flow between components\n"
+        "- Security layers and authentication"
+    ),
+    "user_flow": (
+        "Generate a user journey flowchart showing:\n"
+        "- User entry points\n"
+        "- Main user interactions\n"
+        "- Decision points and branches\n"
+        "- Error handling paths\n"
+        "- Success completion flows"
+    ),
+    "data_flow": (
+        "Generate a data flow diagram showing:\n"
+        "- Data sources and inputs\n"
+        "- Processing steps and transformations\n"
+        "- Storage locations\n"
+        "- Data outputs and destinations\n"
+        "- Data validation and error handling"
+    ),
+    "deployment": (
+        "Generate a deployment architecture flowchart showing:\n"
+        "- Development environment\n"
+        "- Staging and testing\n"
+        "- Production deployment\n"
+        "- Monitoring and logging\n"
+        "- Backup and recovery processes"
+    )
+}
+
+
+ER_DIAGRAM_PROMPTS = {
+    "database_schema": (
+        "Generate a database schema ER diagram showing:\n"
+        "- All major entities mentioned in the PRD\n"
+        "- Relationships between entities\n"
+        "- Key attributes for each entity\n"
+        "- Primary and foreign keys\n"
+        "- Cardinality (one-to-many, many-to-many)\n"
+        "- Any specific data requirements mentioned"
+    ),
+    "data_model": (
+        "Generate a comprehensive data model showing:\n"
+        "- Core business entities\n"
+        "- Data flow relationships\n"
+        "- Storage requirements\n"
+        "- Data validation rules\n"
+        "- Integration points with external systems"
+    ),
+    "user_data_structure": (
+        "Generate a user data structure diagram showing:\n"
+        "- User profiles and roles\n"
+        "- User preferences and settings\n"
+        "- Activity tracking and history\n"
+        "- Authentication and permissions\n"
+        "- Data privacy considerations"
+    ),
+    "api_schema": (
+        "Generate an API schema diagram showing:\n"
+        "- API endpoints and methods\n"
+        "- Request/response data structures\n"
+        "- Authentication mechanisms\n"
+        "- Rate limiting and quotas\n"
+        "- Error handling structures"
+    )
+}

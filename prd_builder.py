@@ -7,6 +7,7 @@ from langchain_pinecone.vectorstores import PineconeVectorStore
 from pinecone import Pinecone, ServerlessSpec
 from graph import create_prd_builder_graph
 from typing import Dict, Any, List, Optional, cast
+from llm import LLMInterface
 from state import SessionConfig, PRDBuilderState, SectionStatus
 from langchain.schema import HumanMessage
 from prompts import PRD_TEMPLATE_SECTIONS
@@ -292,3 +293,64 @@ class ThinkingLensPRDBuilder:
         index = pc.Index(index_name)
         vectorstore = PineconeVectorStore(embedding=embedding_model, index=index)
         self.rag = CompleteRagService(llm=None, vectorstore=vectorstore, embedding_model=embedding_model)
+
+    def generate_flowchart(self, session_id: str, flowchart_type: str = "system_architecture") -> Dict:
+        """Generate a technical flowchart based on the current PRD state"""
+        thread_config: RunnableConfig = {"configurable": {"thread_id": session_id}}
+        
+        snapshot = self.app.get_state(thread_config)
+        if not snapshot.values:
+            return {"status": "error", "message": "Session not found"}
+        
+        state = snapshot.values
+        prd_snapshot = state.get("prd_snapshot", "")
+        
+        if not prd_snapshot:
+            return {"status": "error", "message": "PRD not yet assembled"}
+        
+        try:
+            llm = LLMInterface()
+            mermaid_code = llm.generate_technical_flowchart(prd_snapshot, flowchart_type)
+            
+            return {
+                "session_id": session_id,
+                "status": "success",
+                "flowchart_type": flowchart_type,
+                "mermaid_code": mermaid_code,
+                "prd_sections_used": [k for k, v in state["prd_sections"].items() if v.status == SectionStatus.COMPLETED],
+                "generated_at": datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            return {"status": "error", "message": f"Failed to generate flowchart: {str(e)}"}
+
+    def generate_er_diagram(self, session_id: str, diagram_type: str = "database_schema") -> Dict:
+        """Generate an ER diagram based on the current PRD state"""
+        thread_config: RunnableConfig = {"configurable": {"thread_id": session_id}}
+        
+        snapshot = self.app.get_state(thread_config)
+        if not snapshot.values:
+            return {"status": "error", "message": "Session not found"}
+        
+        state = snapshot.values
+        prd_snapshot = state.get("prd_snapshot", "")
+        
+        if not prd_snapshot:
+            return {"status": "error", "message": "PRD not yet assembled"}
+        
+        try:
+            llm = LLMInterface()
+            mermaid_code = llm.generate_er_diagram(prd_snapshot, diagram_type)
+            
+            return {
+                "session_id": session_id,
+                "status": "success",
+                "diagram_type": diagram_type,
+                "mermaid_code": mermaid_code,
+                "prd_sections_used": [k for k, v in state["prd_sections"].items() if v.status == SectionStatus.COMPLETED],
+                "generated_at": datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            return {"status": "error", "message": f"Failed to generate ER diagram: {str(e)}"}
+        

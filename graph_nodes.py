@@ -76,10 +76,6 @@ def section_planner_node(state: PRDBuilderState) -> PRDBuilderState:
     state["messages"].append(AIMessage(content=message))
     state["needs_human_input"] = False
     state["checkpoint_reason"] = ""
-    
-    print("="*20)
-    print(state)
-    print("="*20)
 
     return state
 
@@ -120,10 +116,6 @@ def section_questioner_node(state: PRDBuilderState) -> PRDBuilderState:
     state["needs_human_input"] = True
     state["checkpoint_reason"] = f"Gathering info for {PRD_TEMPLATE_SECTIONS[current_section]['title']}"
     
-    print("="*20)
-    print(state)
-    print("="*20)
-
     return state
 
 def intent_classifier_node(state: PRDBuilderState) -> PRDBuilderState:
@@ -139,11 +131,6 @@ def intent_classifier_node(state: PRDBuilderState) -> PRDBuilderState:
     
     state["intent_classification"] = IntentType(classification["intent"])
     state["target_section"] = classification.get("target_section")
-    
-
-    print("="*20)
-    print(state)
-    print("="*20)
 
     return state
 

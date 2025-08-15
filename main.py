@@ -139,5 +139,22 @@ async def send_message_with_files(session_id: str, message: str = Form(...), fil
 		raise HTTPException(status_code=400, detail=res.get("message", "error"))
 	return res
 
+@app.post("/sessions/{session_id}/flowchart")
+def generate_flowchart(session_id: str, flowchart_type: str = "system_architecture"):
+    """Generate a technical flowchart based on the PRD"""
+    res = agent.generate_flowchart(session_id=session_id, flowchart_type=flowchart_type)
+    if res.get("status") != "success":
+        raise HTTPException(status_code=400, detail=res.get("message", "error"))
+    return res
+
+@app.post("/sessions/{session_id}/er-diagram")
+def generate_er_diagram(session_id: str, diagram_type: str = "database_schema"):
+    """Generate an ER diagram based on the PRD"""
+    res = agent.generate_er_diagram(session_id=session_id, diagram_type=diagram_type)
+    if res.get("status") != "success":
+        raise HTTPException(status_code=400, detail=res.get("message", "error"))
+    return res
+
+
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
