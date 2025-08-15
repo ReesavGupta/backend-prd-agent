@@ -54,19 +54,52 @@ class LLMInterface:
 
     def classify_intent(self, user_message: str, current_section: str, context: str) -> Dict:
         system = (
-            'Classify the user\'s intent. Return JSON only with these fields:\n'
-            '{\n'
+            "You are an expert at classifying user intent in PRD building conversations.\n"
+            "Classify the user's intent and return JSON only, no extra text:\n"
+            "{\n"
             '  "intent": "section_update|off_target_update|revision|meta_query|off_topic",\n'
             '  "target_section": "section_key_if_applicable",\n'
             '  "confidence": 0.0-1.0\n'
-            '}\n'
-            'Intent definitions:\n'
-            '- section_update: Answering current section questions\n'
-            '- off_target_update: Providing info for different section\n'
-            '- revision: Wants to change/update existing content\n'
-            '- meta_query: Asking about status/progress\n'
-            '- off_topic: Unrelated to PRD building'
+            "}\n\n"
+            "Intent definitions:\n"
+            "- section_update: User is answering questions for the current section\n"
+            "- revision: User wants to change/update content in a completed section\n"
+            "- off_target_update: User provides info for a different section than current\n"
+            "- meta_query: User asks about status/progress/process\n"
+            "- off_topic: Unrelated to PRD building\n\n"
+            "For revisions, identify the target section from the user message.\n"
+            "Look for section names, content references, or clear revision language.\n\n"
+            "Few-shot examples:\n"
+            "---\n"
+            "Current section: problem_statement\n"
+            "User: Our main challenge is that teams waste time on low-priority tasks.\n"
+            "Output: {\"intent\": \"section_update\", \"target_section\": \"problem_statement\", \"confidence\": 0.95}\n"
+            "---\n"
+            "Current section: goals\n"
+            "User: Change the goal from 30% to 60%.\n"
+            "Output: {\"intent\": \"revision\", \"target_section\": \"goals\", \"confidence\": 0.92}\n"
+            "---\n"
+            "Current section: user_personas\n"
+            "User: For the goals section, we want to aim for 40% growth.\n"
+            "Output: {\"intent\": \"off_target_update\", \"target_section\": \"goals\", \"confidence\": 0.9}\n"
+            "---\n"
+            "Current section: problem_statement\n"
+            "User: How many sections are done so far?\n"
+            "Output: {\"intent\": \"meta_query\", \"target_section\": null, \"confidence\": 0.95}\n"
+            "---\n"
+            "Current section: goals\n"
+            "User: What's the weather like today?\n"
+            "Output: {\"intent\": \"off_topic\", \"target_section\": null, \"confidence\": 0.99}\n"
+            "---\n"
+            "Current section: solution_approach\n"
+            "User: Replace 'automated reports' with 'real-time dashboards'.\n"
+            "Output: {\"intent\": \"revision\", \"target_section\": \"solution_approach\", \"confidence\": 0.94}\n"
+            "---\n"
+            "Current section: metrics\n"
+            "User: Our KPIs will focus on time saved per project and error reduction.\n"
+            "Output: {\"intent\": \"section_update\", \"target_section\": \"metrics\", \"confidence\": 0.93}\n"
         )
+
         human = f"Current section: {current_section}\nContext: {context}\nUser message: {user_message}"
         result = self.classifier_model.invoke([SystemMessage(content=system), HumanMessage(content=human)])
         payload = self._json_from_text(str(result.content).strip(), {"intent": "section_update", "target_section": current_section, "confidence": 0.5})
