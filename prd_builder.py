@@ -5,6 +5,7 @@ from datetime import datetime
 from langchain_nomic.embeddings import NomicEmbeddings
 from langchain_pinecone.vectorstores import PineconeVectorStore
 from pinecone import Pinecone, ServerlessSpec
+from pymongo import MongoClient
 from database.database import MongoDBService
 from database.redis import RedisService
 from graph import create_prd_builder_graph
@@ -31,12 +32,13 @@ class ThinkingLensPRDBuilder:
             self.checkpointer = checkpointer
         else:
             if os.getenv("MONGODB_URI"):
-                # self.checkpointer = MongoDBCheckpointer(
-                #     connection_string=os.getenv("MONGODB_URI"),
-                #     database_name="prd_builder",
-                #     collection_name="sessions"
-                # )
-                self.checkpointer = MongoDBSaver.from_conn_string(conn_string=os.getenv("MONGODB_URI"), db_name="prd_builder", checkpoint_collection_name="sessions")
+                try:
+                    client = MongoClient(os.getenv("MONGODB_URI"))
+                    self.checkpointer = MongoDBSaver(client)
+                    print(f"MongoDB checkpointer initialized successfully: {self.checkpointer}")
+                except Exception as e:
+                    print(f"MongoDB checkpointer failed: {e}")
+                    self.checkpointer = SqliteSaver(conn="prd_sessions.db")
             else:
                 self.checkpointer = SqliteSaver(conn="prd_sessions.db")
 

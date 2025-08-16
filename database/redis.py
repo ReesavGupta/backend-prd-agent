@@ -6,11 +6,18 @@ import os
 class RedisService:
     def __init__(self):
         try:
+            # self.redis_client = redis.Redis(
+            #     host=os.getenv("REDIS_HOST", "localhost"),
+            #     port=int(os.getenv("REDIS_PORT", 6379)),
+            #     db=0,
+            #     decode_responses=True
+            # )
             self.redis_client = redis.Redis(
-                host=os.getenv("REDIS_HOST", "localhost"),
-                port=int(os.getenv("REDIS_PORT", 6379)),
-                db=0,
-                decode_responses=True
+                host=os.getenv("REDIS_HOST"),
+                port=int(os.getenv("REDIS_PORT")),
+                decode_responses=True,
+                username=os.getenv("REDIS_USERNAME"),
+                password=os.getenv("REDIS_PASSWORD"),
             )
             # Test connection
             self.redis_client.ping()
