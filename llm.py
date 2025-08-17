@@ -362,3 +362,32 @@ class LLMInterface:
             # Fallback to simple extraction
             words = normalized_idea.split()[:3]
             return " ".join(words)
+    # ... existing code ...
+
+    def generate_prd_answer(self, question: str, context: str) -> str:
+        """Generate answers to questions about the PRD using provided context"""
+        try:
+            system = (
+                "You are a helpful AI assistant that answers questions about Product Requirements Documents (PRDs). "
+                "Use the provided PRD content and document context to answer questions accurately and comprehensively.\n\n"
+                "Guidelines:\n"
+                "- Answer based ONLY on the provided context\n"
+                "- Be specific and reference relevant sections when possible\n"
+                "- If the information isn't in the context, say so clearly\n"
+                "- Provide actionable insights when relevant\n"
+                "- Keep answers concise but thorough\n"
+                "- Use markdown formatting for better readability when appropriate"
+            )
+            
+            human = (
+                f"Context:\n{context}\n\n"
+                f"Question: {question}\n\n"
+                "Please provide a comprehensive answer based on the context above."
+            )
+            
+            result = self.model.invoke([SystemMessage(content=system), HumanMessage(content=human)])
+            return str(result.content).strip()
+            
+        except Exception as e:
+            print(f"[LLM][ERROR] Failed to generate PRD answer: {e}")
+            return f"I apologize, but I encountered an error while processing your question. Please try again or rephrase your question."

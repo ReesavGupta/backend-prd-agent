@@ -521,6 +521,68 @@ class ThinkingLensPRDBuilder:
         except Exception as e:
             return {"status": "error", "message": f"Failed to save session: {str(e)}"}
     
+    def ask_prd_question(self, session_id: str, question: str) -> Dict:
+        """Ask questions about the completed PRD using RAG context"""
+        try:
+            # Get current session state
+            thread_config: RunnableConfig = {"configurable": {"thread_id": session_id}}
+            snapshot = self.app.get_state(thread_config)
+            
+            if not snapshot.values:
+                return {"status": "error", "message": "Session not found"}
+            
+            state = snapshot.values
+            
+            # Check if PRD is completed
+            if not state.get("prd_snapshot"):
+                return {"status": "error", "message": "PRD not yet completed. Please finish building the PRD first."}
+            
+            # Ensure RAG is initialized
+            self._ensure_rag()
+            
+            # Prepare context for the question
+            prd_context = state.get("prd_snapshot", "")
+            
+            # Get RAG context from uploaded documents if available
+            rag_context = ""
+            if state.get("rag_enabled") and self.rag:
+                try:
+                    # Search for relevant documents
+                    docs = self.rag.semantic_search(
+                        query=question, 
+                        k=5, 
+                        fetch_k=50, 
+                        metadata_filter={"session_id": session_id}
+                    )
+                    if docs:
+                        rag_context = "\n\n".join(doc.page_content for doc in docs)
+                except Exception as e:
+                    print(f"[RAG][WARN] Failed to retrieve RAG context: {e}")
+            
+            # Combine PRD context with RAG context
+            full_context = f"PRD Content:\n{prd_context}"
+            if rag_context:
+                full_context += f"\n\nAdditional Document Context:\n{rag_context}"
+            
+            # Generate answer using LLM
+            llm = LLMInterface()
+            answer = llm.generate_prd_answer(question, full_context)
+            
+            return {
+                "status": "success",
+                "answer": answer,
+                "question": question,
+                "session_id": session_id,
+                "context_used": {
+                    "prd_sections": len(state.get("prd_sections", {})),
+                    "rag_documents": len(rag_context.split('\n\n')) if rag_context else 0
+                }
+            }
+            
+        except Exception as e:
+            return {"status": "error", "message": f"Failed to process question: {str(e)}"}
+
+
     def _clear_session_cache(self, session_id: str) -> None:
         """Clear all cached data for a session"""
         try:

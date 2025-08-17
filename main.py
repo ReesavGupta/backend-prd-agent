@@ -166,5 +166,17 @@ async def save_session(session_id: str):
     except Exception as e:
         return {"status": "error", "message": f"Failed to save session: {str(e)}"}
 
+@app.post("/sessions/{session_id}/ask")
+async def ask_prd_question(session_id: str, body: MessageRequest):
+    """Ask questions about the completed PRD using RAG context"""
+    try:
+        result = agent.ask_prd_question(session_id=session_id, question=body.message)
+        if result.get("status") != "success":
+            raise HTTPException(status_code=400, detail=result.get("message", "error"))
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to process question: {str(e)}")
+
+
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
