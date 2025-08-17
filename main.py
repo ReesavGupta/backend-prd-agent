@@ -125,7 +125,7 @@ def get_version(session_id: str, version_id: str):
     return res
 
 @app.post("/sessions/{session_id}/message-with-files")
-async def send_message_with_files(session_id: str, message: str = Form(...), files: List[UploadFile] = File(None)):
+async def send_message_with_files(session_id: str, files: List[UploadFile] = File(...)):
 	saved_paths: List[str] = []
 	if files:
 		upload_dir = os.path.join("uploads", session_id)
@@ -136,7 +136,7 @@ async def send_message_with_files(session_id: str, message: str = Form(...), fil
 			with open(dest, "wb") as out:
 				out.write(await f.read())
 			saved_paths.append(dest)
-	res = agent.send_message(session_id=session_id, message=message, attachments=saved_paths if saved_paths else None)
+	res = agent.send_message(session_id=session_id, message="", attachments=saved_paths if saved_paths else None)
 	if res.get("status") != "success":
 		raise HTTPException(status_code=400, detail=res.get("message", "error"))
 	return res

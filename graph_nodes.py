@@ -466,16 +466,8 @@ def assembler_node(state: PRDBuilderState) -> PRDBuilderState:
 		state["current_stage"] = "review"
 		message = f"""🎉 **PRD Assembly Complete!**
 
-I've assembled your complete PRD. Here's what we've created:
-
-{prd_content[:500]}{'...' if len(prd_content) > 500 else ''}
-
-Would you like to:
-1. Review and edit any sections
-2. Export the final version
-3. Add more details to specific sections
-
-What would you prefer?"""
+        Your PRD is ready. If you'd like some enhancements, just say so.
+        """
 		state["messages"].append(AIMessage(content=message))
 		state["needs_human_input"] = True
 		state["checkpoint_reason"] = "PRD assembly complete - ready for review"

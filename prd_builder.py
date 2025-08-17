@@ -120,17 +120,42 @@ class ThinkingLensPRDBuilder:
         try:
             if attachments:
                 self._ensure_rag()
-				# Ingest PDFs only
+                
+				# Ingest PDFs and text files
                 for path in attachments:
                     if path.lower().endswith(".pdf"):
                         try:
-                            self.rag.ingest_pdf(pdf_path=path, markdown_dir=f"ingested/{session_id}", extra_metadata={"session_id": session_id})
+                            result = self.rag.ingest_pdf(pdf_path=path, markdown_dir=f"ingested/{session_id}", extra_metadata={"session_id": session_id})
                         except Exception as ingest_exc:
-                            print(f"[RAG][WARN] Failed to ingest {path}: {ingest_exc}")
+                            print(f"[RAG][WARN] Failed to ingest PDF {path}: {ingest_exc}")
+                    elif path.lower().endswith((".txt", ".md", ".text")):
+                        try:
+                            result = self.rag.ingest_text(text_path=path, extra_metadata={"session_id": session_id})
+                        except Exception as ingest_exc:
+                            print(f"[RAG][WARN] Failed to ingest text file {path}: {ingest_exc}")
+                
+                # Set RAG as enabled for this session
+                # Update the session state to enable RAG
+                try:
+                    # Get current state again to ensure we have the latest
+                    current_snapshot = self.app.get_state(thread_config)
+                    if current_snapshot.values:
+                        # Create a new state with RAG enabled
+                        updated_state = dict(current_snapshot.values)
+                        updated_state["rag_enabled"] = True
+                        updated_state["rag_context"] = rag_context
+                        
+                        # Update the state
+                        self.app.update_state(thread_config, updated_state)
+                    else:
+                        print(f"[RAG][WARN] Could not update session state - no current values")
+                except Exception as state_update_exc:
+                    print(f"[RAG][WARN] Failed to update session state: {state_update_exc}")
+                
 				# Build initial context from the current message
                 try:
                     docs = self.rag.semantic_search(query=message, k=5, fetch_k=50, metadata_filter={"session_id": session_id})
-                    rag_context = "\n\n".join(d.page_content for d in docs)
+                    rag_context = "\n\n".join(doc.page_content for doc in docs)
                 except Exception as srch_exc:
                     print(f"[RAG][WARN] Retrieval failed: {srch_exc}")
             else:
@@ -138,7 +163,7 @@ class ThinkingLensPRDBuilder:
                 if bool(snapshot.values.get("rag_enabled", False)) and self.rag is not None:
                     try:
                         docs = self.rag.semantic_search(query=message, k=5, fetch_k=50, metadata_filter={"session_id": session_id})
-                        rag_context = "\n\n".join(d.page_content for d in docs)
+                        rag_context = "\n\n".join(doc.page_content for doc in docs)
                     except Exception as srch_exc:
                         print(f"[RAG][WARN] Retrieval failed: {srch_exc}")
         except Exception as e:
@@ -147,7 +172,6 @@ class ThinkingLensPRDBuilder:
         try:
 			# Determine if we are currently paused at an interrupt/human input
             pending_next = getattr(snapshot, "next", None)
-            print(f"[PRD] snapshot.next for {session_id}: {pending_next}")
             is_waiting_human = False
             if pending_next and isinstance(pending_next, (list, tuple)):
                 is_waiting_human = "human_input" in pending_next
@@ -160,7 +184,6 @@ class ThinkingLensPRDBuilder:
                     is_waiting_human = False
 
             if is_waiting_human:
-                print(f"[PRD] Resuming interrupt for session {session_id} via Command(resume)")
                 resume_payload: Dict[str, Any] = {"data": message}
                 if rag_context:
                     resume_payload["rag_context"] = rag_context
@@ -177,7 +200,6 @@ class ThinkingLensPRDBuilder:
                     events = list(self.app.stream(user_input, config=thread_config, stream_mode="values"))
                     result = events[-1] if events else self.app.get_state(thread_config).values
             else:
-                print(f"[PRD] Continuing session {session_id} without interrupt")
                 user_input: PRDBuilderState = {"latest_user_input": message, "needs_human_input": False}
                 if rag_context:
                     user_input["rag_context"] = rag_context
@@ -313,14 +335,17 @@ class ThinkingLensPRDBuilder:
     def _ensure_rag(self) -> None:
         if self.rag is not None:
             return
+        
         nomic_key = os.getenv("NOMIC_KEY")
         pinecone_key = os.getenv("PINECONE_KEY")
         index_name = os.getenv("PINECONE_INDEX_NAME", "rag-index")
+        
         if not nomic_key or not pinecone_key:
             raise RuntimeError("RAG not configured: set NOMIC_KEY and PINECONE_KEY")
 
         embedding_model = NomicEmbeddings(nomic_api_key=nomic_key, model="nomic-embed-text-v1.5")
         pc = Pinecone(api_key=pinecone_key)
+        
         # Ensure index exists
         try:
             existing = pc.list_indexes().names()  # type: ignore[attr-defined]
@@ -329,6 +354,7 @@ class ThinkingLensPRDBuilder:
                 existing = [idx.name for idx in pc.list_indexes()]  # type: ignore[assignment]
             except Exception:
                 existing = []
+                
         if index_name not in existing:
             pc.create_index(
                 name=index_name,
@@ -336,6 +362,7 @@ class ThinkingLensPRDBuilder:
                 metric="cosine",
                 spec=ServerlessSpec(cloud="aws", region="us-east-1"),
             )
+            
         index = pc.Index(index_name)
         vectorstore = PineconeVectorStore(embedding=embedding_model, index=index)
         self.rag = CompleteRagService(llm=None, vectorstore=vectorstore, embedding_model=embedding_model)
