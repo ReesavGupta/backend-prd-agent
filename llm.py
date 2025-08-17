@@ -38,6 +38,7 @@ class LLMInterface:
             '}\n'
             'Rules:\n'
             '- If the message already includes product, users, and value, set needs_clarification=false and clarifying_questions=[].\n'
+            '- MAXIMUM 2 clarifying questions only. Never ask more than 2 questions.\n'
             '- Do not include any extra text outside JSON.'
         )
         messages = [SystemMessage(content=system), HumanMessage(content=raw_idea)]
@@ -49,6 +50,11 @@ class LLMInterface:
         })
         payload["needs_clarification"] = bool(payload.get("needs_clarification", False))
         payload["clarifying_questions"] = payload.get("clarifying_questions", []) or []
+        
+        # Ensure maximum 2 clarifying questions
+        if len(payload["clarifying_questions"]) > 2:
+            payload["clarifying_questions"] = payload["clarifying_questions"][:2]
+        
         payload["normalized"] = payload.get("normalized", "") or ""
         return payload
 
@@ -103,10 +109,22 @@ class LLMInterface:
         human = f"Current section: {current_section}\nContext: {context}\nUser message: {user_message}"
         result = self.classifier_model.invoke([SystemMessage(content=system), HumanMessage(content=human)])
         payload = self._json_from_text(str(result.content).strip(), {"intent": "section_update", "target_section": current_section, "confidence": 0.5})
+        
+        # Validate intent
         if payload.get("intent") not in {"section_update", "off_target_update", "revision", "meta_query", "off_topic"}:
             payload["intent"] = "section_update"
+        
+        # Validate target section
         if not payload.get("target_section"):
             payload["target_section"] = current_section
+        
+        # Additional validation for low-confidence classifications
+        confidence = float(payload.get("confidence", 0.5))
+        if confidence < 0.6:
+            # For low confidence, be more conservative and treat as off-topic
+            payload["intent"] = "off_topic"
+            payload["confidence"] = 0.7
+        
         return payload
         
     
@@ -115,9 +133,9 @@ class LLMInterface:
         checklist = "\n".join('- ' + item for item in section_info['checklist'])
         system = (
             f"You are building the {section_info['title']} section of a PRD.\n"
-            "Given the context, ask 1-2 targeted questions that will help gather the most important information for this section.\n\n"
+            "Given the context, ask EXACTLY 2 targeted questions that will help gather the most important information for this section.\n\n"
             f"Section checklist to complete:\n{checklist}\n\n"
-            "Be specific and actionable. Focus on the highest-impact questions."
+            "CRITICAL: Ask EXACTLY 2 questions, no more, no less. Be specific and actionable. Focus on the highest-impact questions."
         )
         rag = (context.get('rag_context','') or '')
         human = (
@@ -164,11 +182,30 @@ class LLMInterface:
         # Heuristic fallback so tests progress
         merged = (current_content + ("\n" if current_content else "") + user_input).strip()
         text = merged.lower()
-        score = 0.5
+        score = 0.3  # Lower default score for random responses
+        
+        # Only give higher scores for clearly relevant content
         if section_key == "problem_statement":
             hits = sum(k in text for k in ["product", "users", "user", "value", "problem", "pain", "target"])
             if hits >= 3 and len(text) >= 120:
                 score = 0.85
+        elif section_key == "goals":
+            hits = sum(k in text for k in ["goal", "target", "objective", "aim", "achieve", "increase", "reduce", "improve"])
+            if hits >= 2 and len(text) >= 80:
+                score = 0.75
+        elif section_key == "user_personas":
+            hits = sum(k in text for k in ["user", "persona", "customer", "target", "demographic", "role", "job", "needs"])
+            if hits >= 2 and len(text) >= 80:
+                score = 0.75
+        
+        # For random/unrelated responses, keep score low and ask for clarification
+        if score < 0.5:
+            return {
+                "updated_content": current_content,  # Don't modify existing content
+                "completion_score": score,
+                "next_questions": "Your response doesn't seem to address the current section. Please answer the questions I asked to help build this section properly."
+            }
+        
         return {
             "updated_content": merged,
             "completion_score": score,

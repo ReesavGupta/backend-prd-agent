@@ -22,6 +22,9 @@ def route_after_update(state: PRDBuilderState) -> str:
 	if state["config"].current_section is None:
 		# All sections complete
 		return "assembler"
+	elif state.get("needs_human_input"):
+		# If human input is needed (e.g., low completion score), wait for user
+		return "human_input"
 	else:
 		return "section_questioner"
 

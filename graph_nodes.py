@@ -93,6 +93,11 @@ def section_questioner_node(state: PRDBuilderState) -> PRDBuilderState:
     # Get current section info
     section = state["prd_sections"][current_section]
     
+    # Check if we already have questions pending for this section
+    if state.get("needs_human_input") and state.get("checkpoint_reason", "").startswith("Gathering info for"):
+        # Don't ask new questions if we're already waiting for answers
+        return state
+    
     # Generate context for question generation
     context = {
         "normalized_idea": state["normalized_idea"],
@@ -192,6 +197,11 @@ def section_updater_node(state: PRDBuilderState) -> PRDBuilderState:
         # Continue with more questions
         if update_result["next_questions"] != "complete":
             state["messages"].append(AIMessage(content=update_result["next_questions"]))
+        
+        # If completion score is very low, it might be an off-topic response
+        if section.completion_score < 0.3:
+            state["needs_human_input"] = True
+            state["checkpoint_reason"] = f"Low completion score for {PRD_TEMPLATE_SECTIONS[target_section]['title']} - may need clarification"
     
     # If this was an off-target update, restore focus
     if intent == IntentType.OFF_TARGET_UPDATE and original_current:
@@ -247,6 +257,9 @@ def off_topic_responder_node(state: PRDBuilderState) -> PRDBuilderState:
     Shall we continue with the questions for this section?"""
     
     state["messages"].append(AIMessage(content=response))
+    state["needs_human_input"] = True
+    state["checkpoint_reason"] = f"Redirecting focus back to {current_section_name} section"
+    
     return state
 
 def assembler_node(state: PRDBuilderState) -> PRDBuilderState:
