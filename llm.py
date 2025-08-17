@@ -39,6 +39,8 @@ class LLMInterface:
             'Rules:\n'
             '- If the message already includes product, users, and value, set needs_clarification=false and clarifying_questions=[].\n'
             '- MAXIMUM 2 clarifying questions only. Never ask more than 2 questions.\n'
+            '- Be lenient - if you can infer reasonable details, don\'t ask for clarification.\n'
+            '- Only ask for clarification if absolutely essential information is missing.\n'
             '- Do not include any extra text outside JSON.'
         )
         messages = [SystemMessage(content=system), HumanMessage(content=raw_idea)]
@@ -69,7 +71,7 @@ class LLMInterface:
             "}\n\n"
             "Intent definitions:\n"
             "- section_update: User is answering questions for the current section\n"
-            "- revision: User wants to change/update content in a completed section\n"
+            "- revision: User wants to change/update content in a completed section (look for words like 'change', 'update', 'replace', 'modify', 'edit')\n"
             "- off_target_update: User provides info for a different section than current\n"
             "- meta_query: User asks about status/progress/process\n"
             "- off_topic: Unrelated to PRD building\n\n"
@@ -78,24 +80,24 @@ class LLMInterface:
             "Few-shot examples:\n"
             "---\n"
             "Current section: problem_statement\n"
+            "User: Change this section to focus on customer retention instead of acquisition.\n"
+            "Output: {\"intent\": \"revision\", \"target_section\": \"problem_statement\", \"confidence\": 0.95}\n"
+            "---\n"
+            "Current section: goals\n"
+            "User: Update the goals section to say 'achieve 60% growth' instead of '30%'.\n"
+            "Output: {\"intent\": \"revision\", \"target_section\": \"goals\", \"confidence\": 0.94}\n"
+            "---\n"
+            "Current section: user_personas\n"
+            "User: Please change the user personas section to include remote workers.\n"
+            "Output: {\"intent\": \"revision\", \"target_section\": \"user_personas\", \"confidence\": 0.96}\n"
+            "---\n"
+            "Current section: problem_statement\n"
             "User: Our main challenge is that teams waste time on low-priority tasks.\n"
             "Output: {\"intent\": \"section_update\", \"target_section\": \"problem_statement\", \"confidence\": 0.95}\n"
             "---\n"
             "Current section: goals\n"
-            "User: Change the goal from 30% to 60%.\n"
-            "Output: {\"intent\": \"revision\", \"target_section\": \"goals\", \"confidence\": 0.92}\n"
-            "---\n"
-            "Current section: user_personas\n"
             "User: For the goals section, we want to aim for 40% growth.\n"
             "Output: {\"intent\": \"off_target_update\", \"target_section\": \"goals\", \"confidence\": 0.9}\n"
-            "---\n"
-            "Current section: problem_statement\n"
-            "User: How many sections are done so far?\n"
-            "Output: {\"intent\": \"meta_query\", \"target_section\": null, \"confidence\": 0.95}\n"
-            "---\n"
-            "Current section: goals\n"
-            "User: What's the weather like today?\n"
-            "Output: {\"intent\": \"off_topic\", \"target_section\": null, \"confidence\": 0.99}\n"
             "---\n"
             "Current section: solution_approach\n"
             "User: Replace 'automated reports' with 'real-time dashboards'.\n"
@@ -104,6 +106,14 @@ class LLMInterface:
             "Current section: metrics\n"
             "User: Our KPIs will focus on time saved per project and error reduction.\n"
             "Output: {\"intent\": \"section_update\", \"target_section\": \"metrics\", \"confidence\": 0.93}\n"
+            "---\n"
+            "Current section: any\n"
+            "User: Please change the content of the goals section to be more ambitious.\n"
+            "Output: {\"intent\": \"revision\", \"target_section\": \"goals\", \"confidence\": 0.93}\n"
+            "---\n"
+            "Current section: any\n"
+            "User: I want to modify the problem statement section.\n"
+            "Output: {\"intent\": \"revision\", \"target_section\": \"problem_statement\", \"confidence\": 0.95}\n"
         )
 
         human = f"Current section: {current_section}\nContext: {context}\nUser message: {user_message}"
@@ -152,9 +162,10 @@ class LLMInterface:
         checklist = "\n".join('- ' + item for item in section_info['checklist'])
         system = (
             f"Update the {section_info['title']} section based on user input.\n"
+            "IMPORTANT: Do NOT include section headers (## {title}) in the content.\n"
             "Return JSON only:\n"
             "{\n"
-            '  "updated_content": "new section content",\n'
+            '  "updated_content": "new section content without headers",\n'
             '  "completion_score": 0.0-1.0,\n'
             '  "next_questions": "what to ask next or \'complete\' if done"\n'
             "}\n"
@@ -180,7 +191,11 @@ class LLMInterface:
                 "next_questions": payload.get("next_questions", "complete"),
             }
         # Heuristic fallback so tests progress
-        merged = (current_content + ("\n" if current_content else "") + user_input).strip()
+        # Don't append if user input contains section headers to prevent duplication
+        if any(header in user_input.lower() for header in ["## ", "### ", "# "]):
+            merged = user_input.strip()  # Use only user input if it contains headers
+        else:
+            merged = (current_content + ("\n" if current_content else "") + user_input).strip()
         text = merged.lower()
         score = 0.3  # Lower default score for random responses
         
@@ -310,3 +325,40 @@ class LLMInterface:
         
         result = self.classifier_model.invoke([SystemMessage(content=system), HumanMessage(content=human)])
         return str(result.content).strip()
+
+    def generate_professional_title(self, normalized_idea: str) -> str:
+        """Use LLM to generate a professional, short title"""
+        if not normalized_idea:
+            return "Product Requirements Document"
+        
+        try:
+            prompt = f"""Generate a professional, concise title (max 6-8 words) for this product idea. 
+            The title should be:
+            - Short and memorable
+            - Professional and business-like
+            - Capture the core value proposition
+            - Suitable for a PRD document header
+            
+            Return only the title, nothing else. No quotes, no formatting.
+            
+            Product idea: {normalized_idea[:300]}..."""
+            
+            result = self.model.invoke([SystemMessage(content="You are a senior product manager. Generate concise, professional product titles that capture the essence of the product."), 
+                                        HumanMessage(content=prompt)])
+            
+            title = str(result.content).strip()
+            # Clean up any extra formatting
+            title = title.replace('"', '').replace("'", "").replace("#", "").strip()
+            
+            # Validate title length
+            if len(title) > 60:
+                # Fallback to simple extraction
+                words = normalized_idea.split()[:3]
+                return " ".join(words)
+            
+            return title
+        except Exception as e:
+            print(f"[PRD][WARNING] Title generation failed: {e}")
+            # Fallback to simple extraction
+            words = normalized_idea.split()[:3]
+            return " ".join(words)

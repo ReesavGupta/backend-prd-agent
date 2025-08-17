@@ -67,6 +67,7 @@ class PRDBuilderState(TypedDict):
     checkpoint_reason: str
 	# Assembler control
     run_assembler: bool
+    assembler_last_run: Optional[str]
 
 	# RAG
     rag_enabled: bool

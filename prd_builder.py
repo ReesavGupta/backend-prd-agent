@@ -227,6 +227,32 @@ class ThinkingLensPRDBuilder:
             elif section.status == SectionStatus.IN_PROGRESS:
                 sections_in_progress[key] = section_info
         
+        total_sections = len(state["prd_sections"])
+        completed_count = len(sections_completed)
+        
+        if completed_count == total_sections:
+            # All sections are complete
+            progress_text = f"🎉 All {total_sections} sections completed!"
+        elif completed_count == 0:
+            # No sections started
+            progress_text = f"0/{total_sections} sections completed"
+        else:
+            # Some sections in progress
+            active_sections = [k for k, v in state["prd_sections"].items() 
+                             if v.content or v.status == SectionStatus.IN_PROGRESS]
+            active_completed = [k for k in sections_completed.keys() 
+                               if k in active_sections]
+            progress_text = f"{len(active_completed)}/{len(active_sections)} active sections completed"
+        
+        llm = LLMInterface()
+        title = llm.generate_professional_title(state.get("normalized_idea", ""))
+
+        if "professional_title" not in state or not state.get("professional_title"):
+            state["professional_title"] = title
+        
+        professional_title = state["professional_title"]
+        
+
         return {
             "session_id": session_id,
             "status": "success",
@@ -237,7 +263,8 @@ class ThinkingLensPRDBuilder:
             "sections_in_progress": sections_in_progress,
             "prd_snapshot": state.get("prd_snapshot", ""),
             "issues": state.get("issues_list", []),
-            "progress": f"{len(sections_completed)}/{len(state['prd_sections'])} sections completed"
+            "progress": progress_text,
+            "professional_title": professional_title
         }
     
     def export_prd(self, session_id: str, format: str = "markdown") -> Dict:

@@ -15,19 +15,18 @@ def route_after_classification(state: PRDBuilderState) -> str:
         return "section_updater"  # Default
 
 def route_after_update(state: PRDBuilderState) -> str:
-	"""Route after section update"""
-	# Trigger light assembly when requested (e.g., after section completion)
-	if state.get("run_assembler"):
-		return "assembler"
-	if state["config"].current_section is None:
-		# All sections complete
-		return "assembler"
-	elif state.get("needs_human_input"):
-		# If human input is needed (e.g., low completion score), wait for user
-		return "human_input"
-	else:
-		return "section_questioner"
-
+    """Route after section update"""
+    # Run assembler after any section update to rebuild PRD snapshot
+    if state.get("run_assembler"):
+        return "assembler"
+    
+    # Don't run assembler again if we just ran it
+    if state.get("needs_human_input"):
+        # If human input is needed, wait for user
+        return "human_input"
+    else:
+        return "section_questioner"
+        
 def route_after_assembler(state: PRDBuilderState) -> str:
 	"""Resume flow after assembly."""
 	# If all sections complete, stay in review for user approval/export
